@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>World Conquest</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="topbar">
+    <div>
+      <h1>🌍 WORLD CONQUEST</h1>
+      <span class="subtitle">A pixel-style global territory game</span>
+    </div>
+    <div class="stats">
+      <span>💰 <b id="coins">100</b></span>
+      <span>⚡ <b id="income">5</b>/sec</span>
+      <span>🏳️ <b id="owned">0</b></span>
+    </div>
+  </div>
+
+  <main>
+    <aside id="panel">
+      <h2>Territory</h2>
+      <div id="selected">Click a country on the map.</div>
+      <button id="conquer" disabled>CONQUER — 25 💰</button>
+      <button id="save">SAVE GAME</button>
+      <button id="reset" class="danger">RESET</button>
+
+      <div class="help">
+        <b>How to play</b>
+        <p>Click a country to inspect it. Conquer neutral countries or enemy countries for coins. Your territories generate income every second.</p>
+        <p>Use your mouse wheel to zoom and drag to move around the world.</p>
+      </div>
+    </aside>
+
+    <section id="game">
+      <canvas id="map"></canvas>
+      <div id="tip"></div>
+      <div class="legend">
+        <span><i class="you"></i>You</span>
+        <span><i class="neutral"></i>Neutral</span>
+        <span><i class="enemy"></i>Enemy</span>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+  <script src="game.js"></script>
+</body>
+</html>

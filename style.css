@@ -1,0 +1,24 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: "Courier New", monospace; background: #0a0e14; color: #f5f7fa; }
+body { image-rendering: pixelated; }
+#topbar { height: 74px; display:flex; align-items:center; justify-content:space-between; padding:10px 18px; background:#111824; border-bottom:3px solid #283448; }
+h1 { margin:0; font-size:22px; letter-spacing:2px; }
+.subtitle { color:#8c9ab0; font-size:12px; }
+.stats { display:flex; gap:18px; font-size:16px; }
+.stats span { background:#182131; padding:9px 12px; border:2px solid #2b3a51; }
+main { display:flex; height:calc(100vh - 74px); }
+#panel { width:270px; min-width:270px; padding:18px; background:#101722; border-right:3px solid #283448; z-index:3; }
+#panel h2 { margin-top:0; color:#72d6ff; }
+#selected { min-height:120px; color:#b8c3d2; line-height:1.5; }
+button { width:100%; padding:12px; margin:7px 0; font-family:inherit; font-weight:bold; color:#fff; background:#2367d1; border:2px solid #62a0ff; cursor:pointer; }
+button:hover:not(:disabled) { filter:brightness(1.2); }
+button:disabled { opacity:.4; cursor:not-allowed; }
+button.danger { background:#722c38; border-color:#b85c68; }
+.help { margin-top:25px; padding:12px; border:2px dashed #33445d; color:#8997ab; font-size:12px; line-height:1.5; }
+#game { position:relative; flex:1; overflow:hidden; background:#8bc6d8; }
+canvas { width:100%; height:100%; display:block; cursor:grab; }
+canvas.dragging { cursor:grabbing; }
+.legend { position:absolute; right:14px; bottom:14px; background:#111824dd; border:2px solid #283448; padding:8px; display:flex; gap:12px; font-size:11px; }
+.legend i { display:inline-block; width:12px; height:12px; margin-right:5px; vertical-align:-2px; border:1px solid #fff4; }
+.you { background:#39d98a; } .neutral { background:#8793a3; } .enemy { background:#d85858; }
+#tip { position:absolute; pointer-events:none; display:none; background:#111824ee; border:2px solid #fff3; padding:6px 9px; font-size:12px; }
