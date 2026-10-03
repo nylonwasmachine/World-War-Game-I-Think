@@ -8,7 +8,10 @@ const modeEl = document.getElementById('mode');
 
 const W = 720, H = 360;
 const CELL_COST_MONEY = 20;
-const CELL_COST_MANPOWER = 35;
+const CELL_COST_MANPOWER = 18;
+const LAND_COMBAT_COST = 12;
+const BOT_COMBAT_COST = 10;
+const ATTACK_WAVE = 95;
 const BOT_RATE = 0.8;
 const PLAYER_BUILD_CITY = 80;
 const PLAYER_BUILD_PORT = 120;
@@ -26,7 +29,9 @@ let projection, landFeature;
 let dpr = Math.max(1, Math.min(2, devicePixelRatio || 1));
 let buildMode = 'push';
 let nextBotThink = 0;
-let destination = null;
+let destinations = [];
+let attackJobs = [];
+let nextAttackId = 1;
 
 // Cities and ports are world objects, not single pixels. Their circles sit on top of land.
 const cities = [];
@@ -70,7 +75,7 @@ async function loadWorld(){
 }
 
 function resetState(){
-  owner.fill(0); cities.length=0; ports.length=0; pushQueue=[]; pushing=false; destination=null;
+  owner.fill(0); cities.length=0; ports.length=0; pushQueue=[]; attackJobs=[]; destinations=[]; pushing=false;
   money=5000; manpower=7000; buildMode='push'; setModeText();
   const start=nearestLandFromLonLat(5.3,52.2); paintCircle(start.x,start.y,10,2);
 
@@ -154,22 +159,96 @@ function buildExpansionQueue(path,who=2,radius=5){
   return [...candidates.values()].sort((a,b)=>a.score-b.score);
 }
 
-function startPlayerPush(target){
-  if(!isLand(target.x,target.y)||owner[idx(target.x,target.y)]===2)return;
-  const start=findStartForPush(target.x,target.y,2);if(!start){toast('No starting territory found.');return;}
-  const path=astar(start,target,2,true);if(!path.length){toast('No land route to that point.');return;}
-  destination=target;
-  const radius=Math.max(4,Math.min(8,Math.round(4.5/Math.max(zoom,.8))));
-  pushQueue=buildExpansionQueue(path,2,radius);
-  if(!pushQueue.length){toast('That point is already connected.');return;}
-  if(!pushing){pushing=true;claimNextPlayer();}
+function makeAttackJob(target, who=2){
+  const start=findStartForPush(target.x,target.y,who);
+  if(!start)return null;
+  const path=astar(start,target,who,true);
+  if(!path.length)return null;
+  const radius=who===2?Math.max(6,Math.min(11,Math.round(7/Math.max(zoom,.7)))):5;
+  const cells=buildExpansionQueue(path,who,radius);
+  if(!cells.length)return null;
+  return {id:nextAttackId++,who,target,path,cells,cursor:0,committed:0,loss:0,active:true,created:performance.now()};
 }
-function claimNextPlayer(){
-  if(!pushQueue.length){pushing=false;draw();return;}
-  if(money<CELL_COST_MONEY||manpower<CELL_COST_MANPOWER){pushing=false;toast('Not enough Money or Manpower.');return;}
-  const p=pushQueue.shift(),i=idx(p.x,p.y);if(owner[i]!==0&&owner[i]!==1){claimNextPlayer();return;}
-  money-=CELL_COST_MONEY;manpower-=CELL_COST_MANPOWER;owner[i]=2;
-  refreshHUD();draw();setTimeout(claimNextPlayer,5);
+function startPlayerPush(target){
+  if(!isLand(target.x,target.y))return;
+  if(owner[idx(target.x,target.y)]===2)return;
+  const job=makeAttackJob(target,2);
+  if(!job){toast('No land route to that point.');return;}
+  // Multiple attack points are allowed. A click adds another front instead of replacing the first one.
+  destinations.push(target); attackJobs.push(job); pushing=true;
+  toast('Attack point added.');
+  draw();
+}
+function terrainCost(x,y){
+  let edge=0;
+  for(const [dx,dy] of neighbors(x,y)) if(isLand(x+dx,y+dy)&&owner[idx(x+dx,y+dy)]!==owner[idx(x,y)]) edge++;
+  return LAND_COMBAT_COST + Math.min(8,edge);
+}
+function enemyTroopsAt(x,y,defender){
+  if(defender<3)return 0;
+  const b=bots.find(b=>b.id===defender); return b ? Math.max(12,Math.floor(b.manpower*0.015)) : 0;
+}
+function battlePixel(job,p){
+  const i=idx(p.x,p.y), o=owner[i];
+  if(o===job.who)return true;
+  const attackerTroops=Math.max(0,Math.floor(job.committed));
+  if(attackerTroops<=0)return false;
+  const enemy=enemyTroopsAt(p.x,p.y,o);
+  const areaPenalty=terrainCost(p.x,p.y);
+  const required=areaPenalty+enemy;
+  const spend=Math.min(attackerTroops, Math.max(areaPenalty, Math.ceil(required*.28)));
+  job.committed=Math.max(0,job.committed-spend);
+  job.loss+=spend;
+  if(o===0||o===1){
+    if(attackerTroops>areaPenalty){owner[i]=job.who;return true;}
+    return false;
+  }
+  if(o!==job.who){
+    const defender=bots.find(b=>b.id===o);
+    const attackPower=attackerTroops-areaPenalty;
+    const defendPower=enemy;
+    if(attackPower>defendPower){
+      const defenderLoss=Math.max(1,Math.floor((attackPower-defendPower)*.55));
+      if(defender) defender.manpower=Math.max(0,defender.manpower-defenderLoss*2);
+      owner[i]=job.who;
+      return true;
+    }
+    if(defender) defender.manpower=Math.max(0,defender.manpower-Math.max(1,Math.floor(attackPower*.35)));
+    return false;
+  }
+  return false;
+}
+function refillJob(job){
+  if(job.who!==2)return;
+  const available=Math.floor(manpower);
+  if(available<=0)return;
+  const take=Math.min(ATTACK_WAVE,available);
+  manpower-=take; job.committed+=take;
+}
+function advanceAttackJobs(){
+  let active=0;
+  for(const job of attackJobs){
+    if(!job.active)continue;
+    if(job.who===2) refillJob(job);
+    if(job.committed<=0 && (job.who!==2 || manpower<=0)){ job.active=false; continue; }
+    const steps=job.who===2?5:4;
+    for(let s=0;s<steps;s++){
+      if(job.cursor>=job.cells.length)break;
+      const p=job.cells[job.cursor++];
+      const captured=battlePixel(job,p);
+      if(!captured && job.who!==2){
+        job.cursor=Math.max(0,job.cursor-1);
+        if(job.committed<=0){ job.active=false; break; }
+        break;
+      }
+    }
+    if(job.cursor>=job.cells.length){
+      job.active=false; job.committed=Math.floor(job.committed*.72);
+    } else active++;
+  }
+  attackJobs=attackJobs.filter(j=>j.active || j.committed>0);
+  pushing=active>0;
+  refreshHUD(); draw();
 }
 
 function countFor(who){
@@ -191,12 +270,12 @@ function objectCanBePlaced(x,y,who,type){
 function addCity(x,y,who=2,free=false){
   if(!objectCanBePlaced(x,y,who,'city'))return false;
   if(!free){if(who===2&&money<PLAYER_BUILD_CITY)return false;if(who===2)money-=PLAYER_BUILD_CITY;}
-  cities.push({x,y,owner:who,radius:5});return true;
+  cities.push({x,y,owner:who,radius:3.4});return true;
 }
 function addPort(x,y,who=2,free=false){
   if(!objectCanBePlaced(x,y,who,'port'))return false;
   if(!free){if(who===2&&money<PLAYER_BUILD_PORT)return false;if(who===2)money-=PLAYER_BUILD_PORT;}
-  ports.push({x,y,owner:who,radius:7});return true;
+  ports.push({x,y,owner:who,radius:3.8});return true;
 }
 function placeObject(x,y,type){
   const ok=type==='city'?addCity(x,y,2,false):addPort(x,y,2,false);
@@ -204,10 +283,9 @@ function placeObject(x,y,type){
   else toast(type==='city'?'City needs your land and space.':'Port must be on your land near the sea.');
 }
 function objectOwnerUpdate(){
-  // Objects are captured if their center pixel is captured. Their circle remains visually independent of pixels.
   for(const o of [...cities,...ports]){
     const newOwner=owner[idx(Math.round(o.x),Math.round(o.y))];
-    if(newOwner>=2&&newOwner!==o.owner){o.owner=newOwner;}
+    if(newOwner>=2&&newOwner!==o.owner)o.owner=newOwner;
   }
 }
 
@@ -230,11 +308,27 @@ function draw(){
   for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++)if(owner[idx(x,y)]===2){let edge=false;for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]])if(isLand(x+dx,y+dy)&&owner[idx(x+dx,y+dy)]!==2){edge=true;break;}if(edge)ctx.fillRect(x,y,1.05,1.05);}
   ctx.globalAlpha=1;
 
-  // Objects are smooth circles and are not locked to a pixel shape.
-  for(const c of cities){ctx.fillStyle=c.owner===2?color.city:ownerColor(c.owner);ctx.beginPath();ctx.arc(c.x+.5,c.y+.5,c.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.65)';ctx.lineWidth=.7;ctx.stroke();}
-  for(const p of ports){ctx.fillStyle=p.owner===2?color.port:ownerColor(p.owner);ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,p.radius,0,Math.PI*2);ctx.fill();ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=.8;ctx.stroke();}
+  // Small smooth strategic circles. Icons stay readable without making the circles large.
+  for(const c of cities){
+    const r=c.radius; ctx.fillStyle=c.owner===2?color.city:ownerColor(c.owner);ctx.beginPath();ctx.arc(c.x+.5,c.y+.5,r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff4c2';ctx.beginPath();ctx.moveTo(c.x-.1,c.y-2.4);ctx.lineTo(c.x+2.5,c.y);ctx.lineTo(c.x+.1,c.y+2.6);ctx.lineTo(c.x-2.5,c.y);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#8b5a2b';ctx.fillRect(c.x-1.6,c.y+.1,3.2,2.7);
+  }
+  for(const p of ports){
+    const r=p.radius; ctx.fillStyle=p.owner===2?color.port:ownerColor(p.owner);ctx.beginPath();ctx.arc(p.x+.5,p.y+.5,r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.65)';ctx.lineWidth=.55;ctx.stroke();
+    // Tiny ship silhouette.
+    ctx.fillStyle='#eaffff';ctx.beginPath();ctx.moveTo(p.x-3,p.y+1.8);ctx.lineTo(p.x+3.2,p.y+1.8);ctx.lineTo(p.x+1.7,p.y+3.2);ctx.lineTo(p.x-2,p.y+3.2);ctx.closePath();ctx.fill();
+    ctx.fillRect(p.x-.45,p.y-2.8,.8,4.5);ctx.beginPath();ctx.moveTo(p.x+.35,p.y-2.7);ctx.lineTo(p.x+3,p.y+.3);ctx.lineTo(p.x+.35,p.y+.3);ctx.closePath();ctx.fill();
+  }
 
-  if(destination){ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=.7;ctx.beginPath();ctx.arc(destination.x+.5,destination.y+.5,3.5/Math.max(zoom,.7),0,Math.PI*2);ctx.stroke();}
+  // Attack points and troop movement counters.
+  for(const job of attackJobs){
+    if(!job.active)continue; const q=gridToScreen(job.target.x+.5,job.target.y+.5);
+    const moving=Math.floor(job.committed); const enemy=enemyTroopsAt(job.target.x,job.target.y,owner[idx(job.target.x,job.target.y)]);
+    ctx.strokeStyle=job.who===2?'rgba(255,255,255,.7)':'rgba(255,120,120,.7)';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(job.target.x+.5,job.target.y+.5,4.5/Math.max(zoom,.7),0,Math.PI*2);ctx.stroke();
+    ctx.save();ctx.font='700 '+(9/Math.max(zoom,.7))+'px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';ctx.fillText(moving.toLocaleString()+' ⚔ '+enemy.toLocaleString(),job.target.x+.5,job.target.y-7/Math.max(zoom,.7));ctx.restore();
+  }
   ctx.restore();
 }
 
@@ -276,29 +370,19 @@ function botChooseTarget(bot){
 
 function botExpand(bot){
   const target=botChooseTarget(bot);if(!target)return;
-  const start=findStartForPush(target.x,target.y,bot.id);if(!start)return;
-  const path=astar(start,{x:target.x,y:target.y},bot.id,true);if(!path.length)return;
-  const rate=BOT_RATE;
-  const radius=bot.type==='attacker'?4:bot.type==='economist'?3:3;
-  const q=buildExpansionQueue(path,bot.id,radius);
-  const maxCells=Math.max(3,Math.floor((bot.type==='attacker'?18:12)*rate));
-  let spent=0;
-  for(const p of q){
-    if(spent>=maxCells)break;
-    const i=idx(p.x,p.y);const o=owner[i];
-    if(o===bot.id)continue;
-    if(o>=2&&o!==bot.id){ if(bot.type==='attacker'){owner[i]=bot.id;bot.money-=CELL_COST_MONEY*rate;bot.manpower-=CELL_COST_MANPOWER*rate;spent++;} continue; }
-    if(bot.money<CELL_COST_MONEY*rate||bot.manpower<CELL_COST_MANPOWER*rate)break;
-    bot.money-=CELL_COST_MONEY*rate;bot.manpower-=CELL_COST_MANPOWER*rate;owner[i]=bot.id;spent++;
-  }
+  const job=makeAttackJob(target,bot.id);if(!job)return;
+  job.committed=Math.max(80,Math.floor(bot.manpower*.035*BOT_RATE));
+  bot.manpower=Math.max(0,bot.manpower-job.committed);
+  attackJobs.push(job);
 }
+
 function botBuild(bot){
   const c=countFor(bot.id);
   if(bot.type==='economist'&&bot.money>500&&c.port<3){
-    const p=findBuildSpot(bot.id,'port');if(p){bot.money-=PLAYER_BUILD_PORT*BOT_RATE;ports.push({x:p.x,y:p.y,owner:bot.id,radius:7});}
+    const p=findBuildSpot(bot.id,'port');if(p){bot.money-=PLAYER_BUILD_PORT*BOT_RATE;ports.push({x:p.x,y:p.y,owner:bot.id,radius:3.8});}
   }
   if((bot.type==='economist'||bot.type==='attacker')&&bot.money>450&&c.city<4){
-    const p=findBuildSpot(bot.id,'city');if(p){bot.money-=PLAYER_BUILD_CITY*BOT_RATE;cities.push({x:p.x,y:p.y,owner:bot.id,radius:5});}
+    const p=findBuildSpot(bot.id,'city');if(p){bot.money-=PLAYER_BUILD_CITY*BOT_RATE;cities.push({x:p.x,y:p.y,owner:bot.id,radius:3.4});}
   }
 }
 function findBuildSpot(who,type){
@@ -317,6 +401,7 @@ function runBots(){
   }
   refreshHUD();draw();
 }
+setInterval(()=>{ advanceAttackJobs(); },140);
 setInterval(runBots,1000);
 
 // Player economy.
