@@ -1,172 +1,115 @@
 const canvas=document.getElementById("map"),ctx=canvas.getContext("2d"),game=document.getElementById("game");
 const moneyEl=document.getElementById("money"),mpEl=document.getElementById("manpower"),landEl=document.getElementById("land");
-const citiesEl=document.getElementById("cities"),portsEl=document.getElementById("ports");
-const landMoneyEl=document.getElementById("landMoney"),portMoneyEl=document.getElementById("portMoney"),moneyRateEl=document.getElementById("moneyRate");
-const landMPEl=document.getElementById("landMP"),cityMPEl=document.getElementById("cityMP"),mpRateEl=document.getElementById("mpRate");
-const selectionEl=document.getElementById("selection"),claimBtn=document.getElementById("claim"),cityBtn=document.getElementById("city"),portBtn=document.getElementById("port");
+const citiesEl=document.getElementById("cities"),portsEl=document.getElementById("ports"),moneyRateEl=document.getElementById("moneyRate"),mpRateEl=document.getElementById("mpRate");
+const frontierEl=document.getElementById("frontier"),cityBtn=document.getElementById("city"),portBtn=document.getElementById("port");
+const W=180,H=90,SAVE="world_conquest_pixel_v2";
+let money=500,manpower=1000,zoom=1,ox=0,oy=0,drag=false,moved=false,lastX=0,lastY=0,selected=null,claiming=false,claimQueue=[],claimTimer=0;
+const tiles=new Map();
+const K=(x,y)=>x+","+y;
 
-const SAVE_KEY="world_conquest_push_v1";
-const COLS=96, ROWS=48;
-let money=250,manpower=500,selected=null,drag=false,lastX=0,lastY=0,moved=false,zoom=1,ox=0,oy=0;
-const PLAYER="#43d17b", ENEMY="#df5b61", NEUTRAL="#667487";
+function landShape(x,y){
+  const lon=x/W*360-180,lat=90-y/H*180;
+  const n=(lon+35)**2/155**2+(lat-12)**2/58**2<1;
+  const a=(lon-115)**2/70**2+(lat-38)**2/35**2<1;
+  const u=(lon+110)**2/45**2+(lat-32)**2/28**2<1;
+  const s=(lon+60)**2/38**2+(lat+20)**2/27**2<1;
+  const ant=(lon+65)**2/23**2+(lat+55)**2/16**2<1;
+  return n||a||u||s||ant;
+}
+for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(landShape(x,y))tiles.set(K(x,y),{x,y,owner:"neutral",city:false,port:false});
+const start={x:89,y:44};
+tiles.get(K(start.x,start.y)).owner="player";
+for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const t=tiles.get(K(start.x+dx,start.y+dy));if(t)t.owner="player";}
+for(const [x,y] of [[25,29],[146,25],[118,61]]){const t=tiles.get(K(x,y));if(t)t.owner="enemy";}
 
-function key(x,y){return x+","+y}
-let tiles=new Map();
+function neigh(t){return [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>tiles.get(K(t.x+dx,t.y+dy))).filter(Boolean)}
+function isFront(t){return t&&t.owner==="neutral"&&neigh(t).some(n=>n.owner==="player")}
+function refreshFront(){for(const t of tiles.values())if(t.owner==="front")t.owner="neutral";for(const t of tiles.values())if(t.owner==="player")for(const n of neigh(t))if(n.owner==="neutral")n.owner="front"}
 
-function worldShape(x,y){
-  // Stylized complete-world silhouette: oceans remain blue and the landmass is divided into claimable tiles.
-  const lon=(x/COLS)*360-180, lat=90-(y/ROWS)*180;
-  const a=Math.pow((lon+35)/155,2)+Math.pow((lat-12)/58,2)<1;
-  const b=Math.pow((lon-115)/70,2)+Math.pow((lat-38)/35,2)<1;
-  const c=Math.pow((lon+110)/45,2)+Math.pow((lat-32)/28,2)<1;
-  const d=Math.pow((lon+60)/38,2)+Math.pow((lat+20)/27,2)<1;
-  const e=Math.pow((lon+65)/23,2)+Math.pow((lat+55)/16,2)<1;
-  const f=Math.pow((lon-20)/25,2)+Math.pow((lat+45)/15,2)<1;
-  return a||b||c||d||e||f;
-}
-for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(worldShape(x,y)){
-  tiles.set(key(x,y),{x,y,owner:"neutral",city:false,port:false,enemyPower:0});
-}
+function save(){localStorage.setItem(SAVE,JSON.stringify({money,manpower,tiles:Object.fromEntries([...tiles].map(([k,v])=>[k,v]))}))}
+function load(){const s=JSON.parse(localStorage.getItem(SAVE)||"null");if(!s)return;money=s.money??money;manpower=s.manpower??manpower;for(const[k,v]of Object.entries(s.tiles||{}))if(tiles.has(k))Object.assign(tiles.get(k),v)}
+load();refreshFront();
 
-const startX=43,startY=23;
-tiles.get(key(startX,startY)).owner="player";
-for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
-  const t=tiles.get(key(startX+dx,startY+dy));if(t)t.owner="border";
-}
-// Enemy starting nations far away
-const enemyStarts=[[17,19],[74,20],[67,34]];
-for(const [x,y] of enemyStarts){
-  const t=tiles.get(key(x,y));
-  if(t)t.owner="enemy";
-  for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
-    const n=tiles.get(key(x+dx,y+dy));if(n&&n.owner==="neutral")n.owner="enemy";
-  }
-}
+function resize(){const d=devicePixelRatio||1;canvas.width=game.clientWidth*d;canvas.height=game.clientHeight*d;ctx.setTransform(d,0,0,d,0,0);draw()}addEventListener("resize",resize);
+function screen(t){const cw=game.clientWidth/W*zoom,ch=game.clientHeight/H*zoom;return [t.x*cw+ox,t.y*ch+oy,cw,ch]}
+function tileAt(px,py){const cw=game.clientWidth/W*zoom,ch=game.clientHeight/H*zoom;const x=Math.floor((px-ox)/cw),y=Math.floor((py-oy)/ch);return tiles.get(K(x,y))||null}
 
-function load(){
-  const s=JSON.parse(localStorage.getItem(SAVE_KEY)||"null");if(!s)return;
-  money=s.money??money;manpower=s.manpower??manpower;
-  for(const [k,v] of Object.entries(s.tiles||{})){if(tiles.has(k))Object.assign(tiles.get(k),v)}
-}
-function save(){
-  const obj={money,manpower,tiles:Object.fromEntries([...tiles].map(([k,v])=>[k,v]))};
-  localStorage.setItem(SAVE_KEY,JSON.stringify(obj));
-}
-load();
-
-function resize(){const d=devicePixelRatio||1;canvas.width=game.clientWidth*d;canvas.height=game.clientHeight*d;ctx.setTransform(d,0,0,d,0,0);draw()}
-addEventListener("resize",resize);
-
-function metrics(){
-  let land=0,cities=0,ports=0;
-  for(const t of tiles.values())if(t.owner==="player"){land++;if(t.city)cities++;if(t.port)ports++}
-  const moneyRate=land*2+ports*8,mpRate=land*1+cities*7;
-  return {land,cities,ports,moneyRate,mpRate}
-}
-function updateUI(){
-  const m=metrics();
-  moneyEl.textContent=Math.floor(money);mpEl.textContent=Math.floor(manpower);landEl.textContent=m.land;
-  citiesEl.textContent=m.cities;portsEl.textContent=m.ports;
-  landMoneyEl.textContent=m.land*2;portMoneyEl.textContent=m.ports*8;moneyRateEl.textContent=m.moneyRate;
-  landMPEl.textContent=m.land;cityMPEl.textContent=m.cities*7;mpRateEl.textContent=m.mpRate;
-  const own=selected&&selected.owner==="player",border=selected&&selected.owner==="border";
-  claimBtn.disabled=!border||money<20||manpower<35;
-  cityBtn.disabled=!own||selected.city||money<80;
-  portBtn.disabled=!own||selected.port||money<120;
-}
-
-function screenFor(x,y){
-  const w=game.clientWidth,h=game.clientHeight;
-  const cellW=w/COLS,cellH=h/ROWS;
-  return [x*cellW*zoom+ox,y*cellH*zoom+oy,cellW*zoom,cellH*zoom];
-}
-function tileAt(px,py){
-  const w=game.clientWidth,h=game.clientHeight;
-  const cw=w/COLS,ch=h/ROWS;
-  const x=Math.floor((px-ox)/(cw*zoom)),y=Math.floor((py-oy)/(ch*zoom));
-  return tiles.get(key(x,y))||null;
-}
-function neighbors(t){
-  return [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>tiles.get(key(t.x+dx,t.y+dy))).filter(Boolean);
-}
-function isClaimable(t){
-  return t.owner==="border"|| (t.owner==="neutral" && neighbors(t).some(n=>n.owner==="player"));
-}
-function refreshBorders(){
-  for(const t of tiles.values())if(t.owner==="border")t.owner="neutral";
-  for(const t of tiles.values())if(t.owner==="player"){
-    for(const n of neighbors(t))if(n.owner==="neutral")n.owner="border";
-  }
-}
 function draw(){
-  const w=game.clientWidth,h=game.clientHeight;
-  ctx.clearRect(0,0,w,h);ctx.fillStyle="#82bdd0";ctx.fillRect(0,0,w,h);
-  // subtle world grid
-  ctx.strokeStyle="rgba(22,66,80,.14)";ctx.lineWidth=1;
-  for(let x=0;x<=COLS;x+=4){const p=screenFor(x,0);ctx.beginPath();ctx.moveTo(p[0],0);ctx.lineTo(p[0],h);ctx.stroke()}
-  for(let y=0;y<=ROWS;y+=4){const p=screenFor(0,y);ctx.beginPath();ctx.moveTo(0,p[1]);ctx.lineTo(w,p[1]);ctx.stroke()}
+  const w=game.clientWidth,h=game.clientHeight;ctx.clearRect(0,0,w,h);ctx.fillStyle="#80bfd1";ctx.fillRect(0,0,w,h);
   for(const t of tiles.values()){
-    const [sx,sy,cw,ch]=screenFor(t.x,t.y);
-    let fill=NEUTRAL;
-    if(t.owner==="player")fill=PLAYER;
-    if(t.owner==="enemy")fill=ENEMY;
-    if(t.owner==="border")fill="#d6b84e";
-    ctx.fillStyle=fill;ctx.fillRect(sx+0.5,sy+0.5,cw-1,ch-1);
-    if(t.owner==="player"||t.owner==="enemy"){
-      ctx.fillStyle="rgba(0,0,0,.10)";ctx.fillRect(sx+cw*.2,sy+ch*.2,cw*.6,ch*.6);
-    }
-    if(t.city){ctx.fillStyle="#f5f5f5";ctx.fillRect(sx+cw*.35,sy+ch*.28,cw*.3,ch*.4);ctx.fillStyle="#252c38";ctx.fillRect(sx+cw*.42,sy+ch*.4,cw*.12,ch*.12)}
-    if(t.port){ctx.fillStyle="#1c5b87";ctx.fillRect(sx+cw*.15,sy+ch*.62,cw*.7,ch*.16)}
-    if(t===selected){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(sx+1,sy+1,cw-2,ch-2)}
+    const [x,y,cw,ch]=screen(t);let c="#718093";
+    if(t.owner==="player")c="#45d884";if(t.owner==="enemy")c="#db5a61";if(t.owner==="front")c="#e2c34f";
+    ctx.fillStyle=c;ctx.fillRect(Math.floor(x),Math.floor(y),Math.ceil(cw)+.2,Math.ceil(ch)+.2);
+    ctx.strokeStyle="rgba(20,45,55,.18)";ctx.strokeRect(Math.floor(x),Math.floor(y),Math.ceil(cw),Math.ceil(ch));
+    if(t.city){ctx.fillStyle="#fff";ctx.fillRect(x+cw*.3,y+ch*.25,cw*.4,ch*.5);ctx.fillStyle="#26303a";ctx.fillRect(x+cw*.44,y+ch*.39,cw*.12,ch*.15)}
+    if(t.port){ctx.fillStyle="#245c85";ctx.fillRect(x+cw*.15,y+ch*.7,cw*.7,ch*.13)}
+    if(t===selected){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(x+1,y+1,cw-2,ch-2)}
   }
-  // Starting circle / capital marker
-  const s=screenFor(startX+.5,startY+.5);
-  ctx.beginPath();ctx.arc(s[0],s[1],Math.max(9,18*zoom),0,Math.PI*2);ctx.strokeStyle="#eafff2";ctx.lineWidth=3;ctx.stroke();
-  ctx.beginPath();ctx.arc(s[0],s[1],5,0,Math.PI*2);ctx.fillStyle=PLAYER;ctx.fill();
+  const [sx,sy,cw,ch]=screen(tiles.get(K(start.x,start.y)));
+  ctx.beginPath();ctx.arc(sx+cw/2,sy+ch/2,Math.max(8,12*zoom),0,Math.PI*2);ctx.strokeStyle="#fff";ctx.lineWidth=3;ctx.stroke();
 }
 
-function select(t){
-  selected=t||null;
-  if(!t){selectionEl.textContent="Click a border tile to select it.";updateUI();draw();return}
-  let owner=t.owner==="player"?"Your territory":t.owner==="enemy"?"Enemy territory":t.owner==="border"?"Frontier / claimable":"Unclaimed";
-  selectionEl.innerHTML=`<b>${owner}</b><br>${t.city?"🏙 City · ":""}${t.port?"⚓ Port · ":""}Tile ${t.x}, ${t.y}`;
-  updateUI();draw();
+function update(){
+  let land=0,cities=0,ports=0;for(const t of tiles.values())if(t.owner==="player"){land++;cities+=t.city?1:0;ports+=t.port?1:0}
+  const mr=land*2+ports*8,pr=land+cities*7;
+  moneyEl.textContent=Math.floor(money);mpEl.textContent=Math.floor(manpower);landEl.textContent=land;citiesEl.textContent=cities;portsEl.textContent=ports;
+  moneyRateEl.textContent="+"+mr+"/s";mpRateEl.textContent="+"+pr+"/s";
+  cityBtn.disabled=!selected||selected.owner!=="player"||selected.city||money<80;
+  portBtn.disabled=!selected||selected.owner!=="player"||selected.port||money<120;
+}
+function nearestOwned(t){
+  let best=null,dist=1e9;
+  for(const p of tiles.values())if(p.owner==="player"){const d=Math.abs(p.x-t.x)+Math.abs(p.y-t.y);if(d<dist){dist=d;best=p}}
+  return best;
+}
+function makePath(startTile,target){
+  // Manhattan path: moves horizontally/vertically, one pixel at a time.
+  let x=startTile.x,y=startTile.y,goalX=target.x,goalY=target.y,path=[];
+  while(x!==goalX||y!==goalY){
+    if(x!==goalX)x+=Math.sign(goalX-x);else y+=Math.sign(goalY-y);
+    const t=tiles.get(K(x,y));if(t)path.push(t);else break;
+  }
+  return path;
+}
+function beginPush(target){
+  if(claiming||target.owner==="player"||target.owner==="enemy")return;
+  const origin=nearestOwned(target);if(!origin)return;
+  claimQueue=makePath(origin,target);
+  // A path may cross ocean in this prototype; stop at the first non-land gap.
+  claimQueue=claimQueue.filter(t=>t);
+  if(!claimQueue.length)return;
+  claiming=true;frontierEl.textContent="Pushing the frontier…";claimTimer=0;
+}
+function claimStep(){
+  if(!claiming)return;
+  if(money<20||manpower<35||!claimQueue.length){
+    claiming=false;frontierEl.textContent=claimQueue.length?"Not enough resources to keep pushing.":"Frontier reached.";
+    refreshFront();save();update();draw();return;
+  }
+  const t=claimQueue.shift();
+  if(t.owner==="enemy"){claiming=false;frontierEl.textContent="Enemy territory reached. War system coming next.";return}
+  money-=20;manpower-=35;t.owner="player";
+  refreshFront();update();draw();
+  if(!claimQueue.length){claiming=false;frontierEl.textContent="Frontier reached.";save()}
+  else claimTimer=setTimeout(claimStep,35);
 }
 
-claimBtn.onclick=()=>{
-  if(!selected||!isClaimable(selected)||money<20||manpower<35)return;
-  money-=20;manpower-=35;selected.owner="player";selected.city=false;selected.port=false;
-  refreshBorders();save();select(selected);
-};
-cityBtn.onclick=()=>{
-  if(!selected||selected.owner!=="player"||selected.city||money<80)return;
-  money-=80;selected.city=true;save();updateUI();draw();
-};
-portBtn.onclick=()=>{
-  if(!selected||selected.owner!=="player"||selected.port||money<120)return;
-  money-=120;selected.port=true;save();updateUI();draw();
-};
+canvas.addEventListener("pointerdown",e=>{drag=true;moved=false;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)});
+canvas.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;if(Math.abs(dx)+Math.abs(dy)>2)moved=true;ox+=dx;oy+=dy;lastX=e.clientX;lastY=e.clientY;draw()});
+canvas.addEventListener("pointerup",e=>{drag=false;if(moved)return;const t=tileAt(e.offsetX,e.offsetY);selected=t||null;if(t&&t.owner!=="player")beginPush(t);update();draw()});
+canvas.addEventListener("wheel",e=>{e.preventDefault();const old=zoom;zoom=Math.max(.7,Math.min(7,zoom*(e.deltaY<0?1.15:.87)));const rx=e.offsetX-ox,ry=e.offsetY-oy;ox=e.offsetX-rx*zoom/old;oy=e.offsetY-ry*zoom/old;draw()},{passive:false});
+
+cityBtn.onclick=()=>{if(selected&&selected.owner==="player"&&!selected.city&&money>=80){money-=80;selected.city=true;save();update();draw()}};
+portBtn.onclick=()=>{if(selected&&selected.owner==="player"&&!selected.port&&money>=120){money-=120;selected.port=true;save();update();draw()}};
+document.getElementById("save").onclick=()=>{save();document.getElementById("save").textContent="SAVED";setTimeout(()=>document.getElementById("save").textContent="SAVE GAME",900)};
+document.getElementById("reset").onclick=()=>{if(confirm("Reset the world?")){localStorage.removeItem(SAVE);location.reload()}};
 
 setInterval(()=>{
-  const m=metrics();money+=m.moneyRate;manpower+=m.mpRate;
-  // Enemy fronts slowly push into neutral land.
-  if(Math.random()<0.18){
-    const fronts=[...tiles.values()].filter(t=>t.owner==="enemy").flatMap(t=>neighbors(t).filter(n=>n.owner==="neutral"));
-    if(fronts.length){const t=fronts[Math.floor(Math.random()*fronts.length)];t.owner="enemy"}
-  }
-  refreshBorders();updateUI();draw();
+  let land=0,cities=0,ports=0;for(const t of tiles.values())if(t.owner==="player"){land++;cities+=t.city?1:0;ports+=t.port?1:0}
+  money+=land*2+ports*8;manpower+=land+cities*7;
+  // Small enemy expansion to make the world feel alive.
+  if(Math.random()<.12){const f=[...tiles.values()].filter(t=>t.owner==="enemy").flatMap(t=>neigh(t).filter(n=>n.owner==="neutral"));if(f.length)f[Math.floor(Math.random()*f.length)].owner="enemy"}
+  refreshFront();update();draw();
 },1000);
 
-canvas.addEventListener("pointerdown",e=>{drag=true;moved=false;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId);canvas.classList.add("dragging")});
-canvas.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;if(Math.abs(dx)+Math.abs(dy)>2)moved=true;ox+=dx;oy+=dy;lastX=e.clientX;lastY=e.clientY;draw()});
-canvas.addEventListener("pointerup",e=>{drag=false;canvas.classList.remove("dragging");if(!moved)select(tileAt(e.offsetX,e.offsetY))});
-canvas.addEventListener("wheel",e=>{
-  e.preventDefault();const beforeX=(e.offsetX-ox),beforeY=(e.offsetY-oy);
-  const old=zoom;zoom=Math.max(.55,Math.min(7,zoom*(e.deltaY<0?1.12:.89)));
-  ox=e.offsetX-beforeX*(zoom/old);oy=e.offsetY-beforeY*(zoom/old);draw()
-},{passive:false});
-
-document.getElementById("save").onclick=()=>{save();document.getElementById("save").textContent="GAME SAVED";setTimeout(()=>document.getElementById("save").textContent="SAVE GAME",1000)};
-document.getElementById("reset").onclick=()=>{if(confirm("Reset the entire world?")){localStorage.removeItem(SAVE_KEY);location.reload()}};
-
-resize();refreshBorders();updateUI();draw();
+resize();update();draw();
