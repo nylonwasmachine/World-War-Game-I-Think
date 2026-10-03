@@ -7,46 +7,76 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="topbar">
-    <div>
-      <h1>🌍 WORLD CONQUEST</h1>
-      <span class="subtitle">A pixel-style global territory game</span>
-    </div>
-    <div class="stats">
-      <span>💰 <b id="coins">100</b></span>
-      <span>⚡ <b id="income">5</b>/sec</span>
-      <span>🏳️ <b id="owned">0</b></span>
-    </div>
+<header>
+  <div>
+    <h1>WORLD CONQUEST</h1>
+    <div class="sub">Claim the world. Build your economy. Push your front.</div>
   </div>
+  <div class="topStats">
+    <span>💰 <b id="money">250</b></span>
+    <span>👥 <b id="manpower">500</b></span>
+    <span>🗺 <b id="land">1</b> Land</span>
+    <span>🏙 <b id="cities">0</b> Cities</span>
+    <span>⚓ <b id="ports">0</b> Ports</span>
+  </div>
+</header>
 
-  <main>
-    <aside id="panel">
-      <h2>Territory</h2>
-      <div id="selected">Click a country on the map.</div>
-      <button id="conquer" disabled>CONQUER — 25 💰</button>
-      <button id="save">SAVE GAME</button>
-      <button id="reset" class="danger">RESET</button>
+<div class="layout">
+  <aside>
+    <div class="nation">
+      <div id="nationColor"></div>
+      <div><b id="nationName">Your Nation</b><small>Player</small></div>
+    </div>
 
-      <div class="help">
-        <b>How to play</b>
-        <p>Click a country to inspect it. Conquer neutral countries or enemy countries for coins. Your territories generate income every second.</p>
-        <p>Use your mouse wheel to zoom and drag to move around the world.</p>
-      </div>
-    </aside>
+    <div class="panel">
+      <h3>ECONOMY</h3>
+      <div class="row"><span>Land income</span><b>+<span id="landMoney">2</span> /s</b></div>
+      <div class="row"><span>Port income</span><b>+<span id="portMoney">0</span> /s</b></div>
+      <div class="row total"><span>Money</span><b>+<span id="moneyRate">2</span> /s</b></div>
+    </div>
 
-    <section id="game">
-      <canvas id="map"></canvas>
-      <div id="tip"></div>
-      <div class="legend">
-        <span><i class="you"></i>You</span>
-        <span><i class="neutral"></i>Neutral</span>
-        <span><i class="enemy"></i>Enemy</span>
-      </div>
-    </section>
+    <div class="panel">
+      <h3>MANPOWER</h3>
+      <div class="row"><span>Land manpower</span><b>+<span id="landMP">1</span> /s</b></div>
+      <div class="row"><span>City manpower</span><b>+<span id="cityMP">0</span> /s</b></div>
+      <div class="row total"><span>Manpower</span><b>+<span id="mpRate">1</span> /s</b></div>
+    </div>
+
+    <div class="panel">
+      <h3>SELECTED TILE</h3>
+      <div id="selection">Click a border tile to select it.</div>
+      <button id="claim" disabled>CLAIM LAND</button>
+      <div class="hint">Claim cost: 20 Money + 35 Manpower</div>
+    </div>
+
+    <div class="panel">
+      <h3>BUILD</h3>
+      <button id="city" disabled>BUILD CITY — 80 💰</button>
+      <button id="port" disabled>BUILD PORT — 120 💰</button>
+      <div class="hint">Cities generate Manpower.<br>Ports generate Money.</div>
+    </div>
+
+    <div class="panel">
+      <h3>WAR</h3>
+      <div id="warStatus">No enemy contact.</div>
+      <div class="hint">Enemy players will appear around the world as you expand.</div>
+    </div>
+
+    <button id="save">SAVE GAME</button>
+    <button id="reset" class="reset">RESET WORLD</button>
+  </aside>
+
+  <main id="game">
+    <canvas id="map"></canvas>
+    <div class="controls">Scroll = zoom · Drag = move · Click = select / claim</div>
+    <div class="legend">
+      <span><i class="player"></i>Your land</span>
+      <span><i class="border"></i>Claimable</span>
+      <span><i class="enemy"></i>Enemy</span>
+      <span><i class="neutral"></i>Unclaimed</span>
+    </div>
   </main>
-
-  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
-  <script src="game.js"></script>
+</div>
+<script src="game.js"></script>
 </body>
 </html>
