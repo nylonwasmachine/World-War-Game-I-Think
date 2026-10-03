@@ -1,67 +1,32 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>World Conquest</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pixel World Conquest</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-<header>
-  <div><h1>WORLD CONQUEST</h1><small>Pixel by pixel. Push your frontier.</small></div>
-  <div class="stats">
-    <span>💰 <b id="money">500</b></span>
-    <span>👥 <b id="manpower">1000</b></span>
-    <span>🗺 <b id="land">1</b> pixels</span>
-    <span>🏙 <b id="cities">0</b></span>
-    <span>⚓ <b id="ports">0</b></span>
-  </div>
-</header>
-<div class="layout">
-<aside>
-  <div class="nation"><div id="color"></div><div><b>Your Nation</b><small>Player</small></div></div>
-
-  <div class="panel">
-    <h3>RESOURCES</h3>
-    <p>Money <b id="moneyRate">+2/s</b></p>
-    <p>Manpower <b id="mpRate">+1/s</b></p>
+  <div id="game">
+    <canvas id="map"></canvas>
+    <div class="hud">
+      <div class="brand">PIXEL WORLD</div>
+      <div class="stats">
+        <span>Money <b id="money">0</b></span>
+        <span>Manpower <b id="manpower">0</b></span>
+        <span>Land <b id="land">0</b></span>
+      </div>
+      <div class="hint">Click land to push your frontier. Every tiny pixel is charged.</div>
+      <div class="buttons">
+        <button id="save">Save</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+    <div id="toast"></div>
   </div>
 
-  <div class="panel">
-    <h3>FRONTIER</h3>
-    <p id="frontier">Click any land pixel to begin pushing.</p>
-    <p class="hint">There is no purchase button. Clicking land starts a direct pixel-by-pixel push.</p>
-  </div>
-
-  <div class="panel">
-    <h3>BUILD</h3>
-    <button id="city">BUILD CITY — 80 MONEY</button>
-    <button id="port">BUILD PORT — 120 MONEY</button>
-    <p class="hint">Select one of your pixels first.</p>
-  </div>
-
-  <div class="panel">
-    <h3>RULES</h3>
-    <p class="hint">
-      Every pixel claimed costs <b>20 Money</b> and <b>35 Manpower</b>.<br><br>
-      A long-distance click creates a continuous path. Your troops move along that path and manpower falls for every pixel captured.
-    </p>
-  </div>
-
-  <button id="save">SAVE GAME</button>
-  <button id="reset" class="reset">RESET</button>
-</aside>
-<main id="game">
-<canvas id="map"></canvas>
-<div class="controls">Click land to push · Scroll to zoom · Drag to pan</div>
-<div class="legend">
-<span><i class="you"></i>Your pixels</span>
-<span><i class="claim"></i>Frontier</span>
-<span><i class="enemy"></i>Enemy</span>
-<span><i class="neutral"></i>Unclaimed</span>
-</div>
-</main>
-</div>
-<script src="game.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+  <script src="game.js"></script>
 </body>
 </html>
