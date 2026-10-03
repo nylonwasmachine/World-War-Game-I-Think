@@ -1,24 +1,23 @@
-* { box-sizing: border-box; }
-html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: "Courier New", monospace; background: #0a0e14; color: #f5f7fa; }
-body { image-rendering: pixelated; }
-#topbar { height: 74px; display:flex; align-items:center; justify-content:space-between; padding:10px 18px; background:#111824; border-bottom:3px solid #283448; }
-h1 { margin:0; font-size:22px; letter-spacing:2px; }
-.subtitle { color:#8c9ab0; font-size:12px; }
-.stats { display:flex; gap:18px; font-size:16px; }
-.stats span { background:#182131; padding:9px 12px; border:2px solid #2b3a51; }
-main { display:flex; height:calc(100vh - 74px); }
-#panel { width:270px; min-width:270px; padding:18px; background:#101722; border-right:3px solid #283448; z-index:3; }
-#panel h2 { margin-top:0; color:#72d6ff; }
-#selected { min-height:120px; color:#b8c3d2; line-height:1.5; }
-button { width:100%; padding:12px; margin:7px 0; font-family:inherit; font-weight:bold; color:#fff; background:#2367d1; border:2px solid #62a0ff; cursor:pointer; }
-button:hover:not(:disabled) { filter:brightness(1.2); }
-button:disabled { opacity:.4; cursor:not-allowed; }
-button.danger { background:#722c38; border-color:#b85c68; }
-.help { margin-top:25px; padding:12px; border:2px dashed #33445d; color:#8997ab; font-size:12px; line-height:1.5; }
-#game { position:relative; flex:1; overflow:hidden; background:#8bc6d8; }
-canvas { width:100%; height:100%; display:block; cursor:grab; }
-canvas.dragging { cursor:grabbing; }
-.legend { position:absolute; right:14px; bottom:14px; background:#111824dd; border:2px solid #283448; padding:8px; display:flex; gap:12px; font-size:11px; }
-.legend i { display:inline-block; width:12px; height:12px; margin-right:5px; vertical-align:-2px; border:1px solid #fff4; }
-.you { background:#39d98a; } .neutral { background:#8793a3; } .enemy { background:#d85858; }
-#tip { position:absolute; pointer-events:none; display:none; background:#111824ee; border:2px solid #fff3; padding:6px 9px; font-size:12px; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#080d14;color:#eaf0f6;font-family:Arial,Helvetica,sans-serif}
+body{image-rendering:pixelated}
+header{height:72px;background:#101925;border-bottom:2px solid #26384e;display:flex;align-items:center;justify-content:space-between;padding:10px 18px;position:relative;z-index:5}
+h1{margin:0;font-size:22px;letter-spacing:3px}.sub{font-size:11px;color:#8191a6;margin-top:4px}
+.topStats{display:flex;gap:8px}.topStats span{background:#172333;border:1px solid #2b405a;padding:10px 12px;font-size:13px}
+.layout{height:calc(100% - 72px);display:flex}
+aside{width:290px;min-width:290px;background:#0e1621;border-right:2px solid #26384e;padding:13px;overflow:auto}
+.nation{display:flex;align-items:center;gap:10px;padding:8px 5px 14px}.nation small{display:block;color:#718198;margin-top:3px}
+#nationColor{width:27px;height:27px;border-radius:50%;background:#43d17b;border:3px solid #d9ffe7;box-shadow:0 0 12px #43d17b}
+.panel{background:#121d2a;border:1px solid #293d55;padding:11px;margin-bottom:9px}
+.panel h3{font-size:11px;color:#7890aa;letter-spacing:1.5px;margin:0 0 9px}
+.row{display:flex;justify-content:space-between;font-size:12px;padding:4px 0;color:#aebaca}.row b{color:#e7edf4}.total{border-top:1px solid #293d55;margin-top:4px;padding-top:7px}
+#selection{font-size:12px;line-height:1.5;min-height:48px;color:#aab8c9}
+button{width:100%;border:1px solid #5c8df0;background:#2865c7;color:white;padding:10px;margin-top:7px;font-weight:bold;font-size:11px;letter-spacing:.6px;cursor:pointer}
+button:hover:not(:disabled){filter:brightness(1.15)}button:disabled{opacity:.3;cursor:not-allowed}.reset{background:#672d36;border-color:#a64d5a}
+.hint{color:#65758a;font-size:10px;line-height:1.5;margin-top:7px}
+#warStatus{font-size:12px;color:#aab8c9;line-height:1.4}
+#game{position:relative;flex:1;overflow:hidden;background:#82bdd0}
+#map{display:block;width:100%;height:100%;cursor:grab}.dragging{cursor:grabbing!important}
+.controls,.legend{position:absolute;background:#0d1622dd;border:1px solid #31465e;padding:7px 9px;font-size:10px;color:#a8b6c6}
+.controls{left:12px;bottom:12px}.legend{right:12px;bottom:12px;display:flex;gap:10px}
+.legend i{display:inline-block;width:10px;height:10px;margin-right:3px;vertical-align:-1px}.player{background:#43d17b}.border{background:#f0c95b}.enemy{background:#df5b61}.neutral{background:#8290a0}
