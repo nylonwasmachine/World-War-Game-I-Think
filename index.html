@@ -15,16 +15,19 @@
         <span>Money <b id="money">0</b></span>
         <span>Manpower <b id="manpower">0</b></span>
         <span>Land <b id="land">0</b></span>
+        <span>Mode <b id="mode">Push</b></span>
       </div>
-      <div class="hint">Click land to push your frontier. Every tiny pixel is charged.</div>
+      <div class="hint">Push creates a broad rounded expansion. C = City · P = Port · Esc = Push</div>
       <div class="buttons">
+        <button id="pushMode">Push</button>
+        <button id="cityMode">City</button>
+        <button id="portMode">Port</button>
         <button id="save">Save</button>
         <button id="reset">Reset</button>
       </div>
     </div>
     <div id="toast"></div>
   </div>
-
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
   <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
   <script src="game.js"></script>
