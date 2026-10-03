@@ -1,115 +1,323 @@
-const canvas=document.getElementById("map"),ctx=canvas.getContext("2d"),game=document.getElementById("game");
-const moneyEl=document.getElementById("money"),mpEl=document.getElementById("manpower"),landEl=document.getElementById("land");
-const citiesEl=document.getElementById("cities"),portsEl=document.getElementById("ports"),moneyRateEl=document.getElementById("moneyRate"),mpRateEl=document.getElementById("mpRate");
-const frontierEl=document.getElementById("frontier"),cityBtn=document.getElementById("city"),portBtn=document.getElementById("port");
-const W=180,H=90,SAVE="world_conquest_pixel_v2";
-let money=500,manpower=1000,zoom=1,ox=0,oy=0,drag=false,moved=false,lastX=0,lastY=0,selected=null,claiming=false,claimQueue=[],claimTimer=0;
-const tiles=new Map();
-const K=(x,y)=>x+","+y;
+const canvas = document.getElementById('map');
+const ctx = canvas.getContext('2d', { alpha: false });
+const moneyEl = document.getElementById('money');
+const manpowerEl = document.getElementById('manpower');
+const landEl = document.getElementById('land');
+const toastEl = document.getElementById('toast');
 
-function landShape(x,y){
-  const lon=x/W*360-180,lat=90-y/H*180;
-  const n=(lon+35)**2/155**2+(lat-12)**2/58**2<1;
-  const a=(lon-115)**2/70**2+(lat-38)**2/35**2<1;
-  const u=(lon+110)**2/45**2+(lat-32)**2/28**2<1;
-  const s=(lon+60)**2/38**2+(lat+20)**2/27**2<1;
-  const ant=(lon+65)**2/23**2+(lat+55)**2/16**2<1;
-  return n||a||u||s||ant;
+// 720x360 logical pixels: tiny cells, but still smooth on normal screens.
+const W = 720, H = 360;
+const CELL_COST_MONEY = 20;
+const CELL_COST_MANPOWER = 35;
+const SAVE_KEY = 'pixel-world-conquest-v4';
+
+let landMask = new Uint8Array(W * H);
+let owner = new Int8Array(W * H); // 0 water, 1 neutral land, 2 player, 3 enemy
+let cities = new Uint8Array(W * H);
+let ports = new Uint8Array(W * H);
+let queue = [];
+let pushing = false;
+let money = 5000;
+let manpower = 7000;
+let zoom = 1;
+let panX = 0, panY = 0;
+let drag = null;
+let projection;
+let landFeature;
+let dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+const color = {
+  ocean: '#071522',
+  land: '#162536',
+  neutral: '#1d3144',
+  player: '#36a8ff',
+  playerEdge: '#7dd2ff',
+  enemy: '#c34b5e',
+  city: '#ffd166',
+  port: '#73e0d0'
+};
+
+function idx(x, y) { return y * W + x; }
+function inside(x, y) { return x >= 0 && y >= 0 && x < W && y < H; }
+function isLand(x, y) { return inside(x,y) && landMask[idx(x,y)] === 1; }
+function isPlayer(x, y) { return inside(x,y) && owner[idx(x,y)] === 2; }
+
+function resize() {
+  dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  canvas.width = Math.floor(innerWidth * dpr);
+  canvas.height = Math.floor(innerHeight * dpr);
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  draw();
 }
-for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(landShape(x,y))tiles.set(K(x,y),{x,y,owner:"neutral",city:false,port:false});
-const start={x:89,y:44};
-tiles.get(K(start.x,start.y)).owner="player";
-for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const t=tiles.get(K(start.x+dx,start.y+dy));if(t)t.owner="player";}
-for(const [x,y] of [[25,29],[146,25],[118,61]]){const t=tiles.get(K(x,y));if(t)t.owner="enemy";}
+window.addEventListener('resize', resize);
 
-function neigh(t){return [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dy])=>tiles.get(K(t.x+dx,t.y+dy))).filter(Boolean)}
-function isFront(t){return t&&t.owner==="neutral"&&neigh(t).some(n=>n.owner==="player")}
-function refreshFront(){for(const t of tiles.values())if(t.owner==="front")t.owner="neutral";for(const t of tiles.values())if(t.owner==="player")for(const n of neigh(t))if(n.owner==="neutral")n.owner="front"}
+async function loadWorld() {
+  const world = await fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(r => r.json());
+  landFeature = topojson.feature(world, world.objects.land);
 
-function save(){localStorage.setItem(SAVE,JSON.stringify({money,manpower,tiles:Object.fromEntries([...tiles].map(([k,v])=>[k,v]))}))}
-function load(){const s=JSON.parse(localStorage.getItem(SAVE)||"null");if(!s)return;money=s.money??money;manpower=s.manpower??manpower;for(const[k,v]of Object.entries(s.tiles||{}))if(tiles.has(k))Object.assign(tiles.get(k),v)}
-load();refreshFront();
+  // Equirectangular keeps the pixel grid predictable and makes click-to-pixel reliable.
+  projection = d3.geoEquirectangular().fitExtent([[0,0],[W,H]], landFeature);
 
-function resize(){const d=devicePixelRatio||1;canvas.width=game.clientWidth*d;canvas.height=game.clientHeight*d;ctx.setTransform(d,0,0,d,0,0);draw()}addEventListener("resize",resize);
-function screen(t){const cw=game.clientWidth/W*zoom,ch=game.clientHeight/H*zoom;return [t.x*cw+ox,t.y*ch+oy,cw,ch]}
-function tileAt(px,py){const cw=game.clientWidth/W*zoom,ch=game.clientHeight/H*zoom;const x=Math.floor((px-ox)/cw),y=Math.floor((py-oy)/ch);return tiles.get(K(x,y))||null}
+  // Rasterize the real world coastline into the tiny pixel grid.
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = W; maskCanvas.height = H;
+  const mctx = maskCanvas.getContext('2d');
+  const path = d3.geoPath(projection, mctx);
+  mctx.fillStyle = '#fff';
+  mctx.beginPath();
+  path(landFeature);
+  mctx.fill();
+  const data = mctx.getImageData(0,0,W,H).data;
+  for (let i=0; i<W*H; i++) landMask[i] = data[i*4] > 10 ? 1 : 0;
 
-function draw(){
-  const w=game.clientWidth,h=game.clientHeight;ctx.clearRect(0,0,w,h);ctx.fillStyle="#80bfd1";ctx.fillRect(0,0,w,h);
-  for(const t of tiles.values()){
-    const [x,y,cw,ch]=screen(t);let c="#718093";
-    if(t.owner==="player")c="#45d884";if(t.owner==="enemy")c="#db5a61";if(t.owner==="front")c="#e2c34f";
-    ctx.fillStyle=c;ctx.fillRect(Math.floor(x),Math.floor(y),Math.ceil(cw)+.2,Math.ceil(ch)+.2);
-    ctx.strokeStyle="rgba(20,45,55,.18)";ctx.strokeRect(Math.floor(x),Math.floor(y),Math.ceil(cw),Math.ceil(ch));
-    if(t.city){ctx.fillStyle="#fff";ctx.fillRect(x+cw*.3,y+ch*.25,cw*.4,ch*.5);ctx.fillStyle="#26303a";ctx.fillRect(x+cw*.44,y+ch*.39,cw*.12,ch*.15)}
-    if(t.port){ctx.fillStyle="#245c85";ctx.fillRect(x+cw*.15,y+ch*.7,cw*.7,ch*.13)}
-    if(t===selected){ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.strokeRect(x+1,y+1,cw-2,ch-2)}
+  resetState();
+  resize();
+}
+
+function resetState() {
+  owner.fill(0); cities.fill(0); ports.fill(0); queue = []; pushing = false;
+  money = 5000; manpower = 7000;
+
+  // Start in the Netherlands area; find the closest actual land pixel.
+  const start = nearestLandFromLonLat(5.3, 52.2);
+  paintCircle(start.x, start.y, 7, 2);
+
+  // Small neutral AI territories for future battles.
+  for (const p of [[-98,39],[37,8],[118,35]]) {
+    const s = nearestLandFromLonLat(p[0], p[1]);
+    paintCircle(s.x, s.y, 5, 3);
   }
-  const [sx,sy,cw,ch]=screen(tiles.get(K(start.x,start.y)));
-  ctx.beginPath();ctx.arc(sx+cw/2,sy+ch/2,Math.max(8,12*zoom),0,Math.PI*2);ctx.strokeStyle="#fff";ctx.lineWidth=3;ctx.stroke();
+  refreshHUD();
+  draw();
 }
 
-function update(){
-  let land=0,cities=0,ports=0;for(const t of tiles.values())if(t.owner==="player"){land++;cities+=t.city?1:0;ports+=t.port?1:0}
-  const mr=land*2+ports*8,pr=land+cities*7;
-  moneyEl.textContent=Math.floor(money);mpEl.textContent=Math.floor(manpower);landEl.textContent=land;citiesEl.textContent=cities;portsEl.textContent=ports;
-  moneyRateEl.textContent="+"+mr+"/s";mpRateEl.textContent="+"+pr+"/s";
-  cityBtn.disabled=!selected||selected.owner!=="player"||selected.city||money<80;
-  portBtn.disabled=!selected||selected.owner!=="player"||selected.port||money<120;
+function nearestLandFromLonLat(lon, lat) {
+  const p = projection([lon, lat]);
+  return nearestLand(Math.round(p[0]), Math.round(p[1]));
 }
-function nearestOwned(t){
-  let best=null,dist=1e9;
-  for(const p of tiles.values())if(p.owner==="player"){const d=Math.abs(p.x-t.x)+Math.abs(p.y-t.y);if(d<dist){dist=d;best=p}}
+
+function nearestLand(x,y) {
+  x = Math.max(0, Math.min(W-1,x)); y = Math.max(0, Math.min(H-1,y));
+  if (isLand(x,y)) return {x,y};
+  for (let r=1;r<40;r++) {
+    for (let dy=-r;dy<=r;dy++) for (let dx=-r;dx<=r;dx++) {
+      if (Math.abs(dx)!==r && Math.abs(dy)!==r) continue;
+      const nx=x+dx, ny=y+dy;
+      if (isLand(nx,ny)) return {x:nx,y:ny};
+    }
+  }
+  return {x,y};
+}
+
+function paintCircle(cx,cy,r,who) {
+  for(let y=cy-r;y<=cy+r;y++) for(let x=cx-r;x<=cx+r;x++) {
+    if (!isLand(x,y)) continue;
+    const dx=x-cx, dy=y-cy;
+    if (dx*dx+dy*dy <= r*r) owner[idx(x,y)] = who;
+  }
+}
+
+function screenToGrid(sx,sy) {
+  const rect = canvas.getBoundingClientRect();
+  const x = (sx - rect.left - innerWidth/2 - panX) / zoom + W/2;
+  const y = (sy - rect.top - innerHeight/2 - panY) / zoom + H/2;
+  return {x:Math.floor(x),y:Math.floor(y)};
+}
+
+function gridToScreen(x,y) {
+  return {
+    x: innerWidth/2 + panX + (x-W/2)*zoom,
+    y: innerHeight/2 + panY + (y-H/2)*zoom
+  };
+}
+
+function neighbors(x,y) {
+  return [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+}
+
+// A* across real land only. Diagonal steps make the frontier rounder instead of a square staircase.
+function findStartForPush(targetX,targetY) {
+  let best = null, bestD = Infinity;
+  const radius = 90;
+  for (let y=Math.max(0,targetY-radius); y<=Math.min(H-1,targetY+radius); y++) {
+    for (let x=Math.max(0,targetX-radius); x<=Math.min(W-1,targetX+radius); x++) {
+      if (!isPlayer(x,y)) continue;
+      const d = Math.abs(x-targetX)+Math.abs(y-targetY);
+      if (d < bestD) { bestD=d; best={x,y}; }
+    }
+  }
+  if (best) return best;
+  // Fallback: nearest player tile globally.
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(isPlayer(x,y)) {
+    const d=Math.abs(x-targetX)+Math.abs(y-targetY);
+    if(d<bestD){bestD=d;best={x,y};}
+  }
   return best;
 }
-function makePath(startTile,target){
-  // Manhattan path: moves horizontally/vertically, one pixel at a time.
-  let x=startTile.x,y=startTile.y,goalX=target.x,goalY=target.y,path=[];
-  while(x!==goalX||y!==goalY){
-    if(x!==goalX)x+=Math.sign(goalX-x);else y+=Math.sign(goalY-y);
-    const t=tiles.get(K(x,y));if(t)path.push(t);else break;
+
+function astar(start,target) {
+  const startI=idx(start.x,start.y), targetI=idx(target.x,target.y);
+  const open=[];
+  const came=new Int32Array(W*H); came.fill(-1);
+  const g=new Float32Array(W*H); g.fill(Infinity);
+  const f=new Float32Array(W*H); f.fill(Infinity);
+  const closed=new Uint8Array(W*H);
+  g[startI]=0; f[startI]=heur(start,target);
+  open.push({x:start.x,y:start.y,f:f[startI]});
+
+  while(open.length){
+    // Small grid + binary heap isn't necessary here; choose lowest f.
+    let bi=0;
+    for(let i=1;i<open.length;i++) if(open[i].f<open[bi].f) bi=i;
+    const cur=open.splice(bi,1)[0];
+    const ci=idx(cur.x,cur.y);
+    if(closed[ci]) continue;
+    closed[ci]=1;
+    if(ci===targetI){
+      const path=[]; let p=ci;
+      while(p!==-1){ path.push({x:p%W,y:Math.floor(p/W)}); if(p===startI) break; p=came[p]; }
+      path.reverse(); return path;
+    }
+    for(const [dx,dy] of neighbors(cur.x,cur.y)){
+      const nx=cur.x+dx, ny=cur.y+dy;
+      if(!isLand(nx,ny)) continue;
+      const ni=idx(nx,ny); if(closed[ni]) continue;
+      const step=(dx&&dy)?1.414:1;
+      // Enemy cells are traversable but never directly captured by this system.
+      const ng=g[ci]+step;
+      if(ng<g[ni]){
+        came[ni]=ci; g[ni]=ng; f[ni]=ng+heur({x:nx,y:ny},target);
+        open.push({x:nx,y:ny,f:f[ni]});
+      }
+    }
   }
-  return path;
+  return [];
 }
-function beginPush(target){
-  if(claiming||target.owner==="player"||target.owner==="enemy")return;
-  const origin=nearestOwned(target);if(!origin)return;
-  claimQueue=makePath(origin,target);
-  // A path may cross ocean in this prototype; stop at the first non-land gap.
-  claimQueue=claimQueue.filter(t=>t);
-  if(!claimQueue.length)return;
-  claiming=true;frontierEl.textContent="Pushing the frontier…";claimTimer=0;
+function heur(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+
+function startPush(target) {
+  if (!isLand(target.x,target.y)) return;
+  if (owner[idx(target.x,target.y)]===2) return;
+  const start=findStartForPush(target.x,target.y);
+  if(!start){ toast('No starting territory found.'); return; }
+  const path=astar(start,target);
+  if(!path.length){ toast('No land route to that pixel.'); return; }
+
+  // Do not charge the starting owned pixels. Capture the path one tiny pixel at a time.
+  queue = path.slice(1).filter(p => owner[idx(p.x,p.y)] !== 2);
+  // If the path reaches an enemy, stop just before it for now.
+  const enemyAt = queue.findIndex(p => owner[idx(p.x,p.y)]===3);
+  if(enemyAt>=0) queue=queue.slice(0,enemyAt);
+  if(!queue.length){ toast('That point is already connected.'); return; }
+  if(!pushing) { pushing=true; claimNext(); }
 }
-function claimStep(){
-  if(!claiming)return;
-  if(money<20||manpower<35||!claimQueue.length){
-    claiming=false;frontierEl.textContent=claimQueue.length?"Not enough resources to keep pushing.":"Frontier reached.";
-    refreshFront();save();update();draw();return;
+
+function claimNext(){
+  if(!queue.length){ pushing=false; refreshFront(); draw(); return; }
+  if(money<CELL_COST_MONEY || manpower<CELL_COST_MANPOWER){
+    pushing=false; toast('Not enough Money or Manpower.'); return;
   }
-  const t=claimQueue.shift();
-  if(t.owner==="enemy"){claiming=false;frontierEl.textContent="Enemy territory reached. War system coming next.";return}
-  money-=20;manpower-=35;t.owner="player";
-  refreshFront();update();draw();
-  if(!claimQueue.length){claiming=false;frontierEl.textContent="Frontier reached.";save()}
-  else claimTimer=setTimeout(claimStep,35);
+  const p=queue.shift();
+  const i=idx(p.x,p.y);
+  if(owner[i]===3){ pushing=false; toast('Enemy territory reached.'); return; }
+  money-=CELL_COST_MONEY; manpower-=CELL_COST_MANPOWER; owner[i]=2;
+  refreshHUD(); draw();
+  setTimeout(claimNext, 8); // fast enough to feel smooth, still visibly pixel-by-pixel
 }
 
-canvas.addEventListener("pointerdown",e=>{drag=true;moved=false;lastX=e.clientX;lastY=e.clientY;canvas.setPointerCapture(e.pointerId)});
-canvas.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-lastX,dy=e.clientY-lastY;if(Math.abs(dx)+Math.abs(dy)>2)moved=true;ox+=dx;oy+=dy;lastX=e.clientX;lastY=e.clientY;draw()});
-canvas.addEventListener("pointerup",e=>{drag=false;if(moved)return;const t=tileAt(e.offsetX,e.offsetY);selected=t||null;if(t&&t.owner!=="player")beginPush(t);update();draw()});
-canvas.addEventListener("wheel",e=>{e.preventDefault();const old=zoom;zoom=Math.max(.7,Math.min(7,zoom*(e.deltaY<0?1.15:.87)));const rx=e.offsetX-ox,ry=e.offsetY-oy;ox=e.offsetX-rx*zoom/old;oy=e.offsetY-ry*zoom/old;draw()},{passive:false});
+function refreshFront(){ /* visual glow is calculated while drawing */ }
 
-cityBtn.onclick=()=>{if(selected&&selected.owner==="player"&&!selected.city&&money>=80){money-=80;selected.city=true;save();update();draw()}};
-portBtn.onclick=()=>{if(selected&&selected.owner==="player"&&!selected.port&&money>=120){money-=120;selected.port=true;save();update();draw()}};
-document.getElementById("save").onclick=()=>{save();document.getElementById("save").textContent="SAVED";setTimeout(()=>document.getElementById("save").textContent="SAVE GAME",900)};
-document.getElementById("reset").onclick=()=>{if(confirm("Reset the world?")){localStorage.removeItem(SAVE);location.reload()}};
+function counts(){
+  let land=0, city=0, port=0;
+  for(let i=0;i<W*H;i++) if(owner[i]===2){land++; if(cities[i])city++; if(ports[i])port++;}
+  return {land,city,port};
+}
 
+function refreshHUD(){
+  const c=counts();
+  moneyEl.textContent=Math.floor(money).toLocaleString();
+  manpowerEl.textContent=Math.floor(manpower).toLocaleString();
+  landEl.textContent=c.land.toLocaleString();
+}
+
+function draw(){
+  if(!projection) return;
+  const scale=dpr;
+  ctx.setTransform(scale,0,0,scale,0,0);
+  ctx.fillStyle=color.ocean; ctx.fillRect(0,0,innerWidth,innerHeight);
+  ctx.save();
+  ctx.translate(innerWidth/2+panX, innerHeight/2+panY);
+  ctx.scale(zoom,zoom);
+  ctx.translate(-W/2,-H/2);
+
+  // World land base.
+  ctx.fillStyle=color.land;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(landMask[idx(x,y)]) ctx.fillRect(x,y,1.05,1.05);
+
+  // Tiny territory pixels. Neighbor smoothing means the frontier reads as a rounded shape.
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const i=idx(x,y), o=owner[i];
+    if(o===0) continue;
+    ctx.fillStyle=o===2?color.player:o===3?color.enemy:color.neutral;
+    ctx.fillRect(x,y,1.08,1.08);
+  }
+
+  // Soft player frontier edge without hiding the tiny-pixel texture.
+  ctx.fillStyle=color.playerEdge;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++) if(owner[idx(x,y)]===2){
+    let edge=false;
+    for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]) if(!isPlayer(x+dx,y+dy) && isLand(x+dx,y+dy)) {edge=true;break;}
+    if(edge) ctx.globalAlpha=.5, ctx.fillRect(x,y,1,1), ctx.globalAlpha=1;
+  }
+
+  // Start/active destination markers.
+  if(queue.length){ const p=queue[queue.length-1]; ctx.strokeStyle='rgba(255,255,255,.8)'; ctx.lineWidth=.8; ctx.beginPath(); ctx.arc(p.x+.5,p.y+.5,4/zoom,0,Math.PI*2); ctx.stroke(); }
+  ctx.restore();
+}
+
+canvas.addEventListener('pointerdown', e=>{
+  if(e.button!==0) return;
+  drag={sx:e.clientX,sy:e.clientY,px:panX,py:panY,moved:false};
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!drag) return;
+  const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy;
+  if(Math.hypot(dx,dy)>5) drag.moved=true;
+  if(drag.moved){panX=drag.px+dx;panY=drag.py+dy;draw();}
+});
+canvas.addEventListener('pointerup', e=>{
+  if(!drag) return;
+  const wasClick=!drag.moved; drag=null;
+  if(wasClick){
+    const p=screenToGrid(e.clientX,e.clientY);
+    if(isLand(p.x,p.y)) startPush(p);
+  }
+});
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const before=screenToGrid(e.clientX,e.clientY);
+  zoom=Math.max(.65,Math.min(7,zoom*Math.exp(-e.deltaY*.001)));
+  const after=gridToScreen(before.x+.5,before.y+.5);
+  panX+=e.clientX-after.x; panY+=e.clientY-after.y;
+  draw();
+},{passive:false});
+
+document.getElementById('reset').onclick=()=>{ resetState(); toast('World reset.'); };
+document.getElementById('save').onclick=()=>{
+  localStorage.setItem(SAVE_KEY, JSON.stringify({owner:Array.from(owner),cities:Array.from(cities),ports:Array.from(ports),money,manpower}));
+  toast('Game saved.');
+};
+
+function toast(msg){ toastEl.textContent=msg; toastEl.classList.add('show'); clearTimeout(toast.t); toast.t=setTimeout(()=>toastEl.classList.remove('show'),1600); }
+
+// Passive economy.
 setInterval(()=>{
-  let land=0,cities=0,ports=0;for(const t of tiles.values())if(t.owner==="player"){land++;cities+=t.city?1:0;ports+=t.port?1:0}
-  money+=land*2+ports*8;manpower+=land+cities*7;
-  // Small enemy expansion to make the world feel alive.
-  if(Math.random()<.12){const f=[...tiles.values()].filter(t=>t.owner==="enemy").flatMap(t=>neigh(t).filter(n=>n.owner==="neutral"));if(f.length)f[Math.floor(Math.random()*f.length)].owner="enemy"}
-  refreshFront();update();draw();
+  const c=counts();
+  money += c.land*2 + c.port*8;
+  manpower += c.land + c.city*7;
+  refreshHUD();
 },1000);
 
-resize();update();draw();
+loadWorld().catch(err=>{console.error(err); toast('World map could not load. Check your internet connection.');});
