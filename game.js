@@ -32,6 +32,8 @@ let nextBotThink = 0;
 let destinations = [];
 let attackJobs = [];
 let nextAttackId = 1;
+let choosingStart = true;
+let gameStarted = false;
 
 // Cities and ports are world objects, not single pixels. Their circles sit on top of land.
 const cities = [];
@@ -76,17 +78,29 @@ async function loadWorld(){
 
 function resetState(){
   owner.fill(0); cities.length=0; ports.length=0; pushQueue=[]; attackJobs=[]; destinations=[]; pushing=false;
-  money=5000; manpower=7000; buildMode='push'; setModeText();
-  const start=nearestLandFromLonLat(5.3,52.2); paintCircle(start.x,start.y,10,2);
+  money=5000; manpower=7000; buildMode='push'; setModeText(); choosingStart=true; gameStarted=false;
+  bots.forEach(b=>{b.target=null;b.cooldown=0;b.money=b.type==='economist'?6200:b.type==='attacker'?4200:5000;b.manpower=b.type==='attacker'?6200:b.type==='economist'?5200:5400;});
+  showStartOverlay(true); refreshHUD(); draw();
+}
 
-  const starts=[[-98,39],[37,8],[118,35]];
-  starts.forEach((p,i)=>{
-    const s=nearestLandFromLonLat(p[0],p[1]); paintCircle(s.x,s.y,9,bots[i].id);
-    bots[i].target=null; bots[i].cooldown=0;
-    if(i===1) addPort(s.x,s.y,bots[i].id,true);
-    if(i===0) addCity(s.x,s.y,bots[i].id,true);
+function randomBotSpawn(existing){
+  for(let tries=0;tries<5000;tries++){
+    const x=Math.floor(Math.random()*W),y=Math.floor(Math.random()*H);
+    if(!isLand(x,y))continue;
+    if(existing.some(s=>Math.hypot(s.x-x,s.y-y)<55))continue;
+    if(existing.some(s=>owner[idx(x,y)]===s.id))continue;
+    return {x,y};
+  }
+  return nearestLand(Math.floor(Math.random()*W),Math.floor(Math.random()*H));
+}
+function startGameAt(x,y){
+  const start=nearestLand(x,y); paintCircle(start.x,start.y,10,2);
+  const starts=[{x:start.x,y:start.y,id:2}];
+  bots.forEach((bot,i)=>{
+    const s=randomBotSpawn(starts); paintCircle(s.x,s.y,9,bot.id); starts.push({x:s.x,y:s.y,id:bot.id});
+    bot.target=null; bot.cooldown=700+i*900;
   });
-  refreshHUD(); draw();
+  choosingStart=false; gameStarted=true; showStartOverlay(false); toast('Your country has spawned. Choose a point to expand.'); refreshHUD(); draw();
 }
 
 function nearestLandFromLonLat(lon,lat){const p=projection([lon,lat]);return nearestLand(Math.round(p[0]),Math.round(p[1]));}
@@ -143,20 +157,25 @@ function astar(start,target,who,allowEnemy=true){
 function heur(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
 
 // Builds a broad, rounded corridor rather than a 1-pixel line.
-function buildExpansionQueue(path,who=2,radius=5){
+function buildExpansionQueue(path,who=2,radius=9){
   const candidates=new Map();
+  // Build a broad moving half-circle: each path slice contributes a rounded fan,
+  // and the outer arc is queued first so the front advances as a wide wave.
   for(let k=1;k<path.length;k++){
     const p=path[k];
     for(let dy=-radius;dy<=radius;dy++) for(let dx=-radius;dx<=radius;dx++){
       const x=p.x+dx,y=p.y+dy;if(!isLand(x,y))continue;
-      const d=Math.hypot(dx,dy);if(d>radius+0.35)continue;
-      const i=idx(x,y);if(owner[i]===who||owner[i]===2&&who!==2)continue;
-      // Don't include enemy pixels in a normal expansion wave.
-      if(owner[i]!==0&&owner[i]!==1&&owner[i]!==who)continue;
-      const score=k*0.001+d*0.08; const old=candidates.get(i); if(old===undefined||score<old.score)candidates.set(i,{x,y,score});
+      const d=Math.hypot(dx,dy);if(d>radius)continue;
+      const i=idx(x,y);const o=owner[i];
+      if(o===who || (o!==0&&o!==1&&o!==who))continue;
+      const progress=k/path.length;
+      // Slightly flatten the back side and keep the active front rounded.
+      const arcBias=(dy*dy)/(radius*radius);
+      const score=k*0.012 + (radius-d)*0.018 + arcBias*0.025;
+      const old=candidates.get(i); if(old===undefined||score<old.score)candidates.set(i,{x,y,score,progress});
     }
   }
-  return [...candidates.values()].sort((a,b)=>a.score-b.score);
+  return [...candidates.values()].sort((a,b)=>a.progress-b.progress || a.score-b.score);
 }
 
 function makeAttackJob(target, who=2){
@@ -164,12 +183,13 @@ function makeAttackJob(target, who=2){
   if(!start)return null;
   const path=astar(start,target,who,true);
   if(!path.length)return null;
-  const radius=who===2?Math.max(6,Math.min(11,Math.round(7/Math.max(zoom,.7)))):5;
+  const radius=who===2?10:8;
   const cells=buildExpansionQueue(path,who,radius);
   if(!cells.length)return null;
   return {id:nextAttackId++,who,target,path,cells,cursor:0,committed:0,loss:0,active:true,created:performance.now()};
 }
 function startPlayerPush(target){
+  if(!gameStarted || choosingStart)return;
   if(!isLand(target.x,target.y))return;
   if(owner[idx(target.x,target.y)]===2)return;
   const job=makeAttackJob(target,2);
@@ -193,14 +213,17 @@ function battlePixel(job,p){
   if(o===job.who)return true;
   const attackerTroops=Math.max(0,Math.floor(job.committed));
   if(attackerTroops<=0)return false;
+  // Only the outer border can be taken. A pixel must touch the attacker's territory.
+  let frontier=false;
+  for(const [dx,dy] of neighbors(p.x,p.y)) if(isLand(p.x+dx,p.y+dy)&&owner[idx(p.x+dx,p.y+dy)]===job.who){frontier=true;break;}
+  if(!frontier)return false;
   const enemy=enemyTroopsAt(p.x,p.y,o);
   const areaPenalty=terrainCost(p.x,p.y);
   const required=areaPenalty+enemy;
   const spend=Math.min(attackerTroops, Math.max(areaPenalty, Math.ceil(required*.28)));
-  job.committed=Math.max(0,job.committed-spend);
-  job.loss+=spend;
+  job.committed=Math.max(0,job.committed-spend); job.loss+=spend;
   if(o===0||o===1){
-    if(attackerTroops>areaPenalty){owner[i]=job.who;return true;}
+    if(attackerTroops>=areaPenalty){owner[i]=job.who;return true;}
     return false;
   }
   if(o!==job.who){
@@ -208,16 +231,15 @@ function battlePixel(job,p){
     const attackPower=attackerTroops-areaPenalty;
     const defendPower=enemy;
     if(attackPower>defendPower){
-      const defenderLoss=Math.max(1,Math.floor((attackPower-defendPower)*.55));
-      if(defender) defender.manpower=Math.max(0,defender.manpower-defenderLoss*2);
-      owner[i]=job.who;
-      return true;
+      if(defender) defender.manpower=Math.max(0,defender.manpower-Math.max(1,Math.floor((attackPower-defendPower)*.55)));
+      owner[i]=job.who; return true;
     }
     if(defender) defender.manpower=Math.max(0,defender.manpower-Math.max(1,Math.floor(attackPower*.35)));
     return false;
   }
   return false;
 }
+
 function refillJob(job){
   if(job.who!==2)return;
   const available=Math.floor(manpower);
@@ -329,12 +351,19 @@ function draw(){
     ctx.strokeStyle=job.who===2?'rgba(255,255,255,.7)':'rgba(255,120,120,.7)';ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(job.target.x+.5,job.target.y+.5,4.5/Math.max(zoom,.7),0,Math.PI*2);ctx.stroke();
     ctx.save();ctx.font='700 '+(9/Math.max(zoom,.7))+'px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';ctx.fillText(moving.toLocaleString()+' ⚔ '+enemy.toLocaleString(),job.target.x+.5,job.target.y-7/Math.max(zoom,.7));ctx.restore();
   }
+  if(choosingStart){
+    ctx.save(); ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle='rgba(3,10,18,.72)'; ctx.fillRect(0,0,innerWidth,innerHeight);
+    ctx.fillStyle='#fff'; ctx.font='800 24px system-ui'; ctx.textAlign='center'; ctx.fillText('CHOOSE YOUR STARTING LAND',innerWidth/2,innerHeight/2-18);
+    ctx.font='500 14px system-ui'; ctx.fillStyle='rgba(255,255,255,.8)'; ctx.fillText('Click any land area to spawn your country',innerWidth/2,innerHeight/2+12);
+    ctx.restore();
+  }
   ctx.restore();
 }
 
 canvas.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag={sx:e.clientX,sy:e.clientY,px:panX,py:panY,moved:false};canvas.setPointerCapture(e.pointerId);});
 canvas.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.sx,dy=e.clientY-drag.sy;if(Math.hypot(dx,dy)>5)drag.moved=true;if(drag.moved){panX=drag.px+dx;panY=drag.py+dy;draw();}});
-canvas.addEventListener('pointerup',e=>{if(!drag)return;const click=!drag.moved;drag=null;if(!click)return;const p=screenToGrid(e.clientX,e.clientY);if(!isLand(p.x,p.y))return;if(buildMode==='push')startPlayerPush(p);else placeObject(p.x,p.y,buildMode);});
+canvas.addEventListener('pointerup',e=>{if(!drag)return;const click=!drag.moved;drag=null;if(!click)return;const p=screenToGrid(e.clientX,e.clientY);if(!isLand(p.x,p.y))return;if(choosingStart){startGameAt(p.x,p.y);return;}if(buildMode==='push')startPlayerPush(p);else placeObject(p.x,p.y,buildMode);});
 canvas.addEventListener('wheel',e=>{e.preventDefault();const before=screenToGrid(e.clientX,e.clientY);zoom=Math.max(.65,Math.min(12,zoom*Math.exp(-e.deltaY*.001)));const after=gridToScreen(before.x+.5,before.y+.5);panX+=e.clientX-after.x;panY+=e.clientY-after.y;draw();},{passive:false});
 
 document.getElementById('save').onclick=()=>{localStorage.setItem(SAVE_KEY,JSON.stringify({owner:Array.from(owner),cities,ports,money,manpower}));toast('Game saved.');};
