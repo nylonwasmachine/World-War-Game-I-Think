@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pixel World Conquest</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game">
+    <div id="offlineNotice">WORLD MAP READY</div>
+    <canvas id="map"></canvas>
+    <div class="hud">
+      <div class="brand">PIXEL WORLD</div>
+      <div class="stats">
+        <span>Money <b id="money">0</b></span>
+        <span>Manpower <b id="manpower">0</b></span>
+        <span>Land <b id="land">0</b></span>
+        <span>Mode <b id="mode">Push</b></span>
+      </div>
+      <div class="hint">Push creates a broad rounded expansion. C = City · P = Port · Esc = Push</div>
+      <div class="buttons">
+        <button id="pushMode">Push</button>
+        <button id="save">Save</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+    <div id="hotbar" class="hotbar">
+      <button class="hot-item" id="cityMode"><span class="hot-icon">⌂</span><span>City</span><b>$500</b></button>
+      <button class="hot-item" id="portMode"><span class="hot-icon">⛵</span><span>Port</span><b>$800</b></button>
+      <button class="hot-item disabled-tool" id="nukeMode"><span class="hot-icon">☢</span><span>Nuke</span><b>$5000</b></button>
+      <button class="hot-item disabled-tool" id="bunkerMode"><span class="hot-icon">▣</span><span>Bunker</span><b>$2500</b></button>
+      <button class="hot-item disabled-tool" id="antiNukeMode"><span class="hot-icon">🛡</span><span>Anti-Nuke</span><b>$3500</b></button>
+    </div>
+    </div>
+    <div id="toast"></div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
